@@ -7,8 +7,13 @@ import { API_KEY_HEADER, getApiKey, openSettings, useApiKey } from "@/lib/apiKey
 import type { Snapshot } from "@/lib/indicators";
 
 type Meta = {
+  query: string;
   symbol: string;
+  code: string;
   name: string;
+  englishName: string;
+  byName: boolean;
+  alternatives: { code: string; name: string }[];
   currency: string;
   exchange: string;
   model: string;
@@ -23,7 +28,7 @@ const EXAMPLE_QUESTIONS = [
   "歷史上有哪些支撐與阻力價位？",
 ];
 
-const POPULAR = ["2330", "0050", "2454", "AAPL", "NVDA", "TSLA"];
+const POPULAR = ["台積電", "0050", "聯發科", "鴻海", "AAPL", "NVIDIA"];
 
 export default function StockAnalyst() {
   const [symbol, setSymbol] = useState("");
@@ -108,15 +113,16 @@ export default function StockAnalyst() {
       )}
 
       <form onSubmit={analyze} className="rounded-2xl border border-line-strong bg-panel/90 shadow-2xl shadow-black/40 backdrop-blur">
-        <div className="grid gap-5 p-6 sm:grid-cols-[200px_1fr]">
+        <div className="grid gap-5 p-6 sm:grid-cols-[220px_1fr]">
           <label className="flex flex-col gap-2">
-            <span className="text-xs font-medium tracking-wide text-muted">股票代碼</span>
+            <span className="text-xs font-medium tracking-wide text-muted">股票代碼或公司名稱</span>
             <input
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
-              placeholder="2330 / AAPL"
+              placeholder="2330、台積電、Apple"
               autoComplete="off"
-              className="rounded-xl border border-line bg-ink px-4 py-3 font-mono text-lg uppercase outline-none placeholder:text-white/25 placeholder:normal-case focus:border-accent/60 focus:ring-4 focus:ring-accent/10"
+              maxLength={30}
+              className="rounded-xl border border-line bg-ink px-4 py-3 text-lg outline-none placeholder:text-base placeholder:text-white/25 focus:border-accent/60 focus:ring-4 focus:ring-accent/10"
             />
             <div className="flex flex-wrap gap-1.5">
               {POPULAR.map((p) => (
@@ -124,8 +130,8 @@ export default function StockAnalyst() {
                   key={p}
                   type="button"
                   onClick={() => setSymbol(p)}
-                  className={`rounded-md px-2 py-0.5 font-mono text-[11px] transition ${
-                    symbol.toUpperCase() === p ? "bg-accent text-ink" : "bg-white/5 text-muted hover:text-fg"
+                  className={`rounded-md px-2 py-0.5 text-[11px] transition ${
+                    symbol.trim().toUpperCase() === p.toUpperCase() ? "bg-accent text-ink" : "bg-white/5 text-muted hover:text-fg"
                   }`}
                 >
                   {p}
@@ -190,7 +196,7 @@ export default function StockAnalyst() {
 
       {loading && !meta && <SkeletonCard />}
 
-      {meta && <SnapshotCard meta={meta} />}
+      {meta && <SnapshotCard meta={meta} onPick={(code) => setSymbol(code)} />}
 
       {(answer || (loading && meta)) && (
         <article className="rounded-2xl border border-line bg-panel">
@@ -198,6 +204,11 @@ export default function StockAnalyst() {
             <div className="flex items-center gap-2.5 text-sm">
               <span className="flex size-6 items-center justify-center rounded-full bg-accent font-mono text-[10px] font-bold text-ink">AI</span>
               分析師回覆
+              {meta && (
+                <span className="text-muted">
+                  · {meta.name} <span className="font-mono text-xs">{meta.code}</span>
+                </span>
+              )}
             </div>
             {meta && (
               <span className="flex items-center gap-2 font-mono text-[11px] text-muted">
@@ -255,7 +266,7 @@ function Sparkline({ values, up }: { values: number[]; up: boolean }) {
   );
 }
 
-function SnapshotCard({ meta }: { meta: Meta }) {
+function SnapshotCard({ meta, onPick }: { meta: Meta; onPick: (code: string) => void }) {
   const s = meta.snapshot;
   const up = s.change > 0;
   const down = s.change < 0;
@@ -276,12 +287,42 @@ function SnapshotCard({ meta }: { meta: Meta }) {
 
   return (
     <section className="overflow-hidden rounded-2xl border border-line bg-panel">
+      {meta.byName && (
+        <div className="flex flex-col gap-2 border-b border-line bg-accent/[0.05] px-6 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-muted">
+            依你輸入的「<span className="text-fg">{meta.query}</span>」辨識為{" "}
+            <span className="font-medium text-accent">
+              {meta.name}（{meta.code}）
+            </span>
+          </p>
+          {meta.alternatives.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-muted">不是這間？</span>
+              {meta.alternatives.map((a) => (
+                <button
+                  key={a.code}
+                  type="button"
+                  onClick={() => onPick(a.code)}
+                  title={`改用 ${a.name}（${a.code}），再按一次開始分析`}
+                  className="rounded-md bg-white/5 px-2 py-0.5 text-muted transition hover:bg-white/10 hover:text-fg"
+                >
+                  {a.name} <span className="font-mono">{a.code}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap items-end justify-between gap-4 px-6 pt-6">
         <div>
-          <p className="font-mono text-xs text-muted">
-            {meta.symbol} · {meta.exchange}
+          <p className="font-mono text-[11px] tracking-[0.2em] text-accent uppercase">分析對象</p>
+          <h2 className="mt-1.5 text-2xl font-bold">
+            {meta.name} <span className="font-mono text-base font-normal text-muted">{meta.code}</span>
+          </h2>
+          <p className="mt-1 text-xs text-muted">
+            {meta.englishName !== meta.name && <>{meta.englishName} · </>}
+            {meta.exchange}
           </p>
-          <h2 className="mt-1.5 text-xl font-bold">{meta.name}</h2>
         </div>
         <div className="text-right">
           <p className="font-mono text-3xl font-medium tabular-nums">

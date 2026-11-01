@@ -3,17 +3,19 @@ import OpenAI from "openai";
 import { buildSnapshot } from "@/lib/indicators";
 import { readApiKey } from "@/lib/openai";
 import { SYSTEM_PROMPT, buildUserPrompt } from "@/lib/prompt";
-import { UserFacingError, getStockHistory, normalizeSymbol, validateSymbol } from "@/lib/stock";
+import { resolveByYahooSearch, resolveQuery, validateQuery, type Resolved } from "@/lib/resolve";
+import { UserFacingError, getStockHistory, type StockHistory } from "@/lib/stock";
 
 const MAX_QUESTION_LENGTH = 1000;
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-  const symbol = normalizeSymbol(String(body.symbol ?? ""));
+  // symbol 可以是股票代碼或公司名稱
+  const query = String(body.symbol ?? "").trim();
   const question = String(body.question ?? "").trim();
 
-  const symbolError = validateSymbol(symbol);
-  if (symbolError) return error(symbolError, 400);
+  const queryError = validateQuery(query);
+  if (queryError) return error(queryError, 400);
   if (!question) return error("請輸入想詢問的問題。", 400);
   if (question.length > MAX_QUESTION_LENGTH) return error(`問題請在 ${MAX_QUESTION_LENGTH} 字以內。`, 400);
 
@@ -22,7 +24,7 @@ export async function POST(request: Request) {
   if (keyError) return error(keyError, 401);
 
   try {
-    const stock = await getStockHistory(symbol);
+    const { stock, resolved } = await loadStock(query);
     if (stock.bars.length < 20) return error("這檔股票的交易資料太少，無法進行技術分析。", 422);
     const snapshot = buildSnapshot(stock.bars);
 
@@ -56,7 +58,20 @@ export async function POST(request: Request) {
 
     // 近 120 日收盤價，供前端畫走勢小圖
     const closes = stock.bars.slice(-120).map((b) => Math.round(b.close * 100) / 100);
-    const meta = { symbol: stock.symbol, name: stock.name, currency: stock.currency, exchange: stock.exchange, model, snapshot, closes };
+    const meta = {
+      query,
+      symbol: stock.symbol,
+      code: resolved.code,
+      name: stock.name,
+      englishName: stock.englishName,
+      byName: resolved.byName,
+      alternatives: resolved.alternatives,
+      currency: stock.currency,
+      exchange: stock.exchange,
+      model,
+      snapshot,
+      closes,
+    };
     return new Response(stream, {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
@@ -83,6 +98,23 @@ export async function POST(request: Request) {
     console.error("[api/stock-analyst]", err);
     return error("分析時發生未預期的錯誤，請稍後再試。", 500);
   }
+}
+
+/**
+ * 解析輸入並取得歷史資料。像代碼的英文輸入（例如 APPLE）若查無資料，改用公司名稱搜尋再試一次。
+ * 台股會把顯示名稱換成中文，英文名稱另外保留。
+ */
+async function loadStock(query: string): Promise<{ stock: StockHistory & { englishName: string }; resolved: Resolved }> {
+  let resolved = await resolveQuery(query);
+  let stock: StockHistory;
+  try {
+    stock = await getStockHistory(resolved.yahooSymbols, query);
+  } catch (err) {
+    if (!(err instanceof UserFacingError) || err.status !== 404 || resolved.byName || /^\d/.test(query)) throw err;
+    resolved = await resolveByYahooSearch(query);
+    stock = await getStockHistory(resolved.yahooSymbols, query);
+  }
+  return { stock: { ...stock, name: resolved.name ?? stock.name, englishName: stock.name }, resolved };
 }
 
 function error(message: string, status: number) {

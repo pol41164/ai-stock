@@ -26,40 +26,23 @@ export class UserFacingError extends Error {
   }
 }
 
-const SYMBOL_PATTERN = /^[A-Z0-9^][A-Z0-9.^=-]{0,14}$/;
-
-export function normalizeSymbol(raw: string): string {
-  return raw.trim().toUpperCase();
-}
-
-export function validateSymbol(symbol: string): string | null {
-  if (!symbol) return "請輸入股票代碼，例如台股 2330、0050，或美股 AAPL、NVDA。";
-  if (!SYMBOL_PATTERN.test(symbol)) return "股票代碼格式不正確，例如台股 2330、美股 AAPL。";
-  return null;
-}
-
 /**
- * 依使用者輸入產生要嘗試的 Yahoo 代碼：
- * 純數字（可帶一個英文字尾，如 00632R）視為台股，先試上市（.TW）再試上櫃（.TWO）；其餘原樣查詢。
+ * 依序嘗試 Yahoo 代碼（例如台股先試上市 .TW 再試上櫃 .TWO），回傳第一個有資料的結果。
+ * label 是顯示在錯誤訊息中的名稱。
  */
-function candidateSymbols(symbol: string): string[] {
-  if (/^\d{4,6}[A-Z]?$/.test(symbol)) return [`${symbol}.TW`, `${symbol}.TWO`];
-  return [symbol];
-}
-
-export async function getStockHistory(input: string): Promise<StockHistory> {
+export async function getStockHistory(yahooSymbols: string[], label: string): Promise<StockHistory> {
   let lastError: UserFacingError | null = null;
-  for (const symbol of candidateSymbols(input)) {
+  for (const symbol of yahooSymbols) {
     try {
       const history = await fetchYahoo(symbol);
       if (history.bars.length > 0) return history;
-      lastError = new UserFacingError(`查無 ${input} 的交易資料。`, 404);
+      lastError = new UserFacingError(`查無 ${label} 的交易資料。`, 404);
     } catch (err) {
       if (!(err instanceof UserFacingError) || err.status !== 404) throw err;
       lastError = err;
     }
   }
-  throw lastError ?? new UserFacingError(`查無 ${input} 的交易資料。`, 404);
+  throw lastError ?? new UserFacingError(`查無 ${label} 的交易資料。`, 404);
 }
 
 type YahooChart = {
